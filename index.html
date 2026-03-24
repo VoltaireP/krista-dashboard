@@ -856,6 +856,10 @@
             const week = DASHBOARD_DATA.weeks[currentWeekIndex];
             const prevWeek = currentWeekIndex > 0 ? DASHBOARD_DATA.weeks[currentWeekIndex - 1] : null;
 
+            const totalLeads = week.campaigns.reduce((sum, c) => sum + (c.leads || 0), 0);
+            const prevTotalLeads = prevWeek ? prevWeek.campaigns.reduce((sum, c) => sum + (c.leads || 0), 0) : 0;
+            const hasDoi = week.account.doiLeads !== undefined;
+
             const kpis = [
                 {
                     label: 'Total Spend',
@@ -863,43 +867,63 @@
                     change: prevWeek ? getChangePercentage(week.account.spend, prevWeek.account.spend) : 0
                 },
                 {
-                    label: 'Total Leads',
-                    value: week.campaigns.reduce((sum, c) => sum + (c.leads || 0), 0),
+                    label: 'Meta Leads',
+                    value: totalLeads,
+                    change: prevWeek ? getChangePercentage(totalLeads, prevTotalLeads) : 0
+                },
+                {
+                    label: 'Meta CPL',
+                    value: '$' + formatDecimal(week.account.spend / (totalLeads || 1), 2),
                     change: prevWeek ? getChangePercentage(
-                        week.campaigns.reduce((sum, c) => sum + (c.leads || 0), 0),
-                        prevWeek.campaigns.reduce((sum, c) => sum + (c.leads || 0), 0)
+                        week.account.spend / (totalLeads || 1),
+                        prevWeek.account.spend / (prevTotalLeads || 1)
                     ) : 0
-                },
-                {
-                    label: 'Cost Per Lead',
-                    value: formatDecimal(week.account.spend / week.campaigns.reduce((sum, c) => sum + (c.leads || 0), 0), 2),
-                    change: prevWeek ? getChangePercentage(
-                        week.account.spend / (week.campaigns.reduce((sum, c) => sum + (c.leads || 0), 0) || 1),
-                        prevWeek.account.spend / (prevWeek.campaigns.reduce((sum, c) => sum + (c.leads || 0), 0) || 1)
-                    ) : 0
-                },
-                {
-                    label: 'Impressions',
-                    value: formatNumber(week.account.impressions),
-                    change: prevWeek ? getChangePercentage(week.account.impressions, prevWeek.account.impressions) : 0
-                },
-                {
-                    label: 'Reach',
-                    value: formatNumber(week.account.reach),
-                    change: prevWeek ? getChangePercentage(week.account.reach, prevWeek.account.reach) : 0
-                },
-                {
-                    label: 'Video Views',
-                    value: formatNumber(week.account.videoViews),
-                    change: prevWeek ? getChangePercentage(week.account.videoViews, prevWeek.account.videoViews) : 0
                 }
             ];
 
+            // Add DOI metrics if data exists
+            if (hasDoi) {
+                kpis.push({
+                    label: 'Confirmed Leads (DOI)',
+                    value: week.account.doiLeads,
+                    change: prevWeek && prevWeek.account.doiLeads ? getChangePercentage(week.account.doiLeads, prevWeek.account.doiLeads) : 0,
+                    highlight: true
+                });
+                kpis.push({
+                    label: 'True CPL (DOI)',
+                    value: '$' + formatDecimal(week.account.doiCpl, 2),
+                    change: prevWeek && prevWeek.account.doiCpl ? getChangePercentage(week.account.doiCpl, prevWeek.account.doiCpl) : 0,
+                    highlight: true
+                });
+                kpis.push({
+                    label: 'DOI Rate',
+                    value: formatDecimal(week.account.doiRate, 1) + '%',
+                    change: prevWeek && prevWeek.account.doiRate ? getChangePercentage(week.account.doiRate, prevWeek.account.doiRate) : 0,
+                    highlight: true
+                });
+            } else {
+                kpis.push({
+                    label: 'Impressions',
+                    value: formatNumber(week.account.impressions),
+                    change: prevWeek ? getChangePercentage(week.account.impressions, prevWeek.account.impressions) : 0
+                });
+                kpis.push({
+                    label: 'Reach',
+                    value: formatNumber(week.account.reach),
+                    change: prevWeek ? getChangePercentage(week.account.reach, prevWeek.account.reach) : 0
+                });
+                kpis.push({
+                    label: 'Video Views',
+                    value: formatNumber(week.account.videoViews),
+                    change: prevWeek ? getChangePercentage(week.account.videoViews, prevWeek.account.videoViews) : 0
+                });
+            }
+
             const container = document.getElementById('kpiContainer');
             container.innerHTML = kpis.map(kpi => `
-                <div class="kpi-card">
+                <div class="kpi-card" ${kpi.highlight ? 'style="border-left-color: #00cec9;"' : ''}>
                     <div class="kpi-label">${kpi.label}</div>
-                    <div class="kpi-value">${kpi.value}</div>
+                    <div class="kpi-value" ${kpi.highlight ? 'style="color: #00cec9;"' : ''}>${kpi.value}</div>
                     <div class="kpi-change ${getChangeClass(kpi.change)}">
                         ${formatChange(kpi.change)}
                     </div>
@@ -1041,19 +1065,35 @@
 
                 if (campaign.type === 'leadgen') {
                     const convRate = campaign.lpv > 0 ? (campaign.leads / campaign.lpv * 100) : 0;
+                    const hasCampaignDoi = campaign.doiLeads !== undefined;
                     metricsHTML = `
                         <div class="metric-item">
                             <div class="metric-label">Spend</div>
                             <div class="metric-value">${formatCurrency(campaign.spend)}</div>
                         </div>
                         <div class="metric-item">
-                            <div class="metric-label">Leads</div>
+                            <div class="metric-label">Meta Leads</div>
                             <div class="metric-value">${campaign.leads}</div>
                         </div>
+                        ${hasCampaignDoi ? `
                         <div class="metric-item">
-                            <div class="metric-label">Cost Per Lead</div>
+                            <div class="metric-label">Confirmed (DOI)</div>
+                            <div class="metric-value" style="color: #00cec9;">${campaign.doiLeads}</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">True CPL (DOI)</div>
+                            <div class="metric-value" style="color: #00cec9;">$${formatDecimal(campaign.doiCpl, 2)}</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">DOI Rate</div>
+                            <div class="metric-value" style="color: ${campaign.doiRate >= 50 ? '#00cec9' : '#e17055'};">${formatDecimal(campaign.doiRate, 1)}%</div>
+                        </div>
+                        ` : `
+                        <div class="metric-item">
+                            <div class="metric-label">Meta CPL</div>
                             <div class="metric-value">$${formatDecimal(campaign.cpl, 2)}</div>
                         </div>
+                        `}
                         <div class="metric-item">
                             <div class="metric-label">Link Clicks</div>
                             <div class="metric-value">${campaign.linkClicks}</div>
@@ -1302,6 +1342,36 @@
                 }
             }
 
+            // DOI insight (if data exists)
+            if (week.account.doiLeads !== undefined) {
+                const doiRate = week.account.doiRate;
+                const trueCpl = week.account.doiCpl;
+                const type = doiRate >= 45 ? 'positive' : 'warning';
+                const icon = doiRate >= 45 ? '✅' : '⚠️';
+
+                insights.push({
+                    type: type,
+                    icon: icon,
+                    title: 'Double Opt-In Performance',
+                    text: `${formatDecimal(doiRate, 1)}% of Meta leads confirmed via double opt-in this week. True cost per confirmed lead is $${formatDecimal(trueCpl, 2)}, compared to Meta's reported CPL of $${formatDecimal(currentCPL, 2)}.`,
+                    metric: `${week.account.doiLeads} confirmed leads from ${currentLeads} Meta leads`
+                });
+
+                // Best and worst DOI campaigns
+                const doiCampaigns = week.campaigns.filter(c => c.doiRate > 0).sort((a, b) => b.doiRate - a.doiRate);
+                if (doiCampaigns.length >= 2) {
+                    const best = doiCampaigns[0];
+                    const worst = doiCampaigns[doiCampaigns.length - 1];
+                    insights.push({
+                        type: 'info',
+                        icon: '📊',
+                        title: 'DOI Rate by Campaign',
+                        text: `"${best.name}" has the highest confirmation rate at ${formatDecimal(best.doiRate, 1)}%. "${worst.name}" has the lowest at ${formatDecimal(worst.doiRate, 1)}%. A low DOI rate may indicate lower-intent leads or landing page alignment issues.`,
+                        metric: `Best: ${best.name} (${formatDecimal(best.doiRate, 1)}%) | Lowest: ${worst.name} (${formatDecimal(worst.doiRate, 1)}%)`
+                    });
+                }
+            }
+
             // Top campaign insight
             const topCampaign = week.campaigns.reduce((a, b) => (b.leads || 0) - (a.leads || 0));
             if (topCampaign && topCampaign.leads > 0) {
@@ -1352,13 +1422,14 @@
                             <th>Campaign</th>
                             <th>Type</th>
                             <th>Spend</th>
-                            <th>Leads</th>
-                            <th>CPL</th>
+                            <th>Meta Leads</th>
+                            <th>Meta CPL</th>
+                            <th>DOI Leads</th>
+                            <th>True CPL</th>
+                            <th>DOI Rate</th>
                             <th>Link Clicks</th>
                             <th>LPV</th>
                             <th>Video Views</th>
-                            <th>Reach</th>
-                            <th>Impressions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1369,11 +1440,12 @@
                                 <td>${formatCurrency(c.spend)}</td>
                                 <td>${c.leads || '-'}</td>
                                 <td>${c.cpl > 0 ? '$' + formatDecimal(c.cpl, 2) : '-'}</td>
+                                <td style="color: #00cec9;">${c.doiLeads !== undefined ? c.doiLeads : '-'}</td>
+                                <td style="color: #00cec9;">${c.doiCpl > 0 ? '$' + formatDecimal(c.doiCpl, 2) : '-'}</td>
+                                <td style="color: ${c.doiRate >= 50 ? '#00cec9' : c.doiRate > 0 ? '#e17055' : '#a0a0a0'};">${c.doiRate > 0 ? formatDecimal(c.doiRate, 1) + '%' : '-'}</td>
                                 <td>${c.linkClicks || '-'}</td>
                                 <td>${c.lpv || '-'}</td>
                                 <td>${c.videoViews || '-'}</td>
-                                <td>${c.reach || '-'}</td>
-                                <td>${c.impressions || '-'}</td>
                             </tr>
                         `).join('')}
                     </tbody>
