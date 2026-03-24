@@ -476,16 +476,82 @@
         .metric-positive { color: #00cec9; }
         .metric-warning { color: #e17055; }
         .metric-neutral { color: #a0a0a0; }
+
+        /* Loading Overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #1a1f36 0%, #16213e 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            transition: opacity 0.5s ease;
+        }
+
+        .loading-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(225, 112, 85, 0.2);
+            border-top: 4px solid #e17055;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: #a0a0a0;
+            font-size: 14px;
+        }
+
+        .data-source-badge {
+            display: inline-block;
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        .badge-live {
+            background: rgba(0, 206, 201, 0.2);
+            color: #00cec9;
+        }
+
+        .badge-cached {
+            background: rgba(253, 203, 110, 0.2);
+            color: #fdcb6e;
+        }
     </style>
 </head>
 <body>
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading dashboard data...</div>
+    </div>
+
     <div class="container">
         <!-- Header -->
         <header>
             <div class="header-content">
                 <h1>Coaching with Krista | Performance Dashboard</h1>
                 <div class="header-meta">
-                    <p>Last updated: March 22, 2026</p>
+                    <p id="lastUpdatedText">Last updated: March 22, 2026</p>
                     <p>Account ID: act_17313399</p>
                 </div>
             </div>
@@ -558,8 +624,14 @@
     </div>
 
     <script>
+        // ==================== CONFIGURATION ====================
+        // Paste your Google Apps Script Web App URL here after deployment:
+        const GOOGLE_SHEETS_URL = '';
+        // Example: 'https://script.google.com/macros/s/AKfycbx.../exec'
+
         // ==================== DATA ====================
-        const DASHBOARD_DATA = {
+        // Static fallback data (used if Google Sheets fetch fails or URL not configured)
+        const FALLBACK_DATA = {
             client: "Coaching with Krista",
             accountId: "act_17313399",
             lastUpdated: "2026-03-22",
@@ -671,6 +743,9 @@
                 }
             ]
         };
+
+        // Active data object (will be replaced with live data if available)
+        let DASHBOARD_DATA = JSON.parse(JSON.stringify(FALLBACK_DATA));
 
         // ==================== STATE ====================
         let currentWeekIndex = DASHBOARD_DATA.weeks.length - 1;
@@ -1045,12 +1120,22 @@
 
         function renderSparklines() {
             const container = document.getElementById('sparklinesContainer');
-            const leadGenCampaigns = ['Stories', 'Memories That Matter', 'New Widow Bundle', 'Dear New Widow', 'Grief Stage Assessment'];
+
+            // Dynamically discover all leadgen campaigns that appear in any week
+            const leadGenSet = new Set();
+            DASHBOARD_DATA.weeks.forEach(w => {
+                w.campaigns.forEach(c => {
+                    if (c.type === 'leadgen' && c.leads > 0) {
+                        leadGenSet.add(c.name);
+                    }
+                });
+            });
+            const leadGenCampaigns = Array.from(leadGenSet);
 
             container.innerHTML = leadGenCampaigns.map(campaignName => {
                 const leadsData = DASHBOARD_DATA.weeks.map(w => {
                     const camp = w.campaigns.find(c => c.name === campaignName);
-                    return camp ? camp.leads : 0;
+                    return camp ? (camp.leads || 0) : 0;
                 });
 
                 return `
@@ -1306,11 +1391,74 @@
             else if (currentTab === 'raw-data') renderRawDataTab();
         }
 
+        // ==================== DATA FETCHING ====================
+        async function fetchLiveData() {
+            if (!GOOGLE_SHEETS_URL) {
+                return null; // No URL configured, use fallback
+            }
+
+            try {
+                const response = await fetch(GOOGLE_SHEETS_URL);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+
+                // Validate the data structure
+                if (!data || !data.weeks || !Array.isArray(data.weeks) || data.weeks.length === 0) {
+                    throw new Error('Invalid data structure from Google Sheets');
+                }
+
+                return data;
+            } catch (error) {
+                console.warn('Failed to fetch live data, using fallback:', error.message);
+                return null;
+            }
+        }
+
+        function updateHeaderInfo(isLive) {
+            const lastUpdatedEl = document.getElementById('lastUpdatedText');
+            if (DASHBOARD_DATA.lastUpdated) {
+                const date = new Date(DASHBOARD_DATA.lastUpdated + 'T00:00:00');
+                const options = { year: 'numeric', month: 'long', day: 'numeric' };
+                const formatted = date.toLocaleDateString('en-US', options);
+                const badge = isLive
+                    ? '<span class="data-source-badge badge-live">LIVE</span>'
+                    : '<span class="data-source-badge badge-cached">CACHED</span>';
+                lastUpdatedEl.innerHTML = `Last updated: ${formatted} ${badge}`;
+            }
+        }
+
+        function hideLoading() {
+            const overlay = document.getElementById('loadingOverlay');
+            overlay.classList.add('hidden');
+            setTimeout(() => overlay.style.display = 'none', 500);
+        }
+
         // ==================== INITIALIZATION ====================
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const liveData = await fetchLiveData();
+
+                if (liveData) {
+                    DASHBOARD_DATA = liveData;
+                    currentWeekIndex = DASHBOARD_DATA.weeks.length - 1;
+                    updateHeaderInfo(true);
+                } else {
+                    updateHeaderInfo(false);
+                }
+            } catch (e) {
+                console.warn('Initialization error:', e);
+                updateHeaderInfo(false);
+            }
+
             renderWeekSelector();
             initTabs();
-            renderAllTabs();
+
+            // Defer chart rendering to next animation frame so the browser
+            // has completed layout and canvas elements have dimensions
+            requestAnimationFrame(() => {
+                renderAllTabs();
+                hideLoading();
+            });
         });
     </script>
 </body>
