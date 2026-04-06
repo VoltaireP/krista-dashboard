@@ -404,17 +404,28 @@
             border: 1px solid rgba(255, 255, 255, 0.1);
             padding: 15px;
             border-radius: 8px;
+            height: 140px;
+            display: flex;
+            flex-direction: column;
         }
 
         .sparkline-label {
             font-size: 12px;
             color: #a0a0a0;
             margin-bottom: 10px;
+            flex-shrink: 0;
+        }
+
+        .sparkline-canvas-wrap {
+            position: relative;
+            flex: 1;
+            min-height: 0;
+            width: 100%;
         }
 
         .sparkline-canvas {
-            width: 100%;
-            height: 60px;
+            width: 100% !important;
+            height: 100% !important;
         }
 
         /* Footer */
@@ -626,7 +637,7 @@
     <script>
         // ==================== CONFIGURATION ====================
         // Paste your Google Apps Script Web App URL here after deployment:
-        const GOOGLE_SHEETS_URL = 'https://script.google.com/macros/s/AKfycby_-dNHvxDAKr4YwislGzY5WNtW8HFwzEzokeQyr9PuthbtdCaUn83DoLWrzyGfWbsdWg/exec';
+        const GOOGLE_SHEETS_URL = '';
         // Example: 'https://script.google.com/macros/s/AKfycbx.../exec'
 
         // ==================== DATA ====================
@@ -1064,7 +1075,12 @@
                 let metricsHTML = '';
 
                 if (campaign.type === 'leadgen') {
-                    const convRate = campaign.lpv > 0 ? (campaign.leads / campaign.lpv * 100) : 0;
+                    // Cap at 100%. Registration-optimized campaigns can report more
+                    // leads than LPVs because the registration event fires without
+                    // a corresponding landing_page_view, which would otherwise
+                    // produce nonsense ratios like 741%.
+                    let convRate = campaign.lpv > 0 ? (campaign.leads / campaign.lpv * 100) : 0;
+                    if (convRate > 100) convRate = 100;
                     const hasCampaignDoi = campaign.doiLeads !== undefined;
                     metricsHTML = `
                         <div class="metric-item">
@@ -1172,22 +1188,31 @@
             });
             const leadGenCampaigns = Array.from(leadGenSet);
 
-            container.innerHTML = leadGenCampaigns.map(campaignName => {
-                const leadsData = DASHBOARD_DATA.weeks.map(w => {
+            // Only show campaigns that were active (had spend) in 2+ weeks
+            const activeCampaigns = leadGenCampaigns.filter(campaignName => {
+                const activeWeeks = DASHBOARD_DATA.weeks.filter(w => {
                     const camp = w.campaigns.find(c => c.name === campaignName);
-                    return camp ? (camp.leads || 0) : 0;
-                });
+                    return camp && (camp.spend || 0) > 0;
+                }).length;
+                return activeWeeks >= 2;
+            });
 
-                return `
-                    <div class="sparkline-card">
-                        <div class="sparkline-label">${campaignName} - Leads</div>
+            if (activeCampaigns.length === 0) {
+                container.innerHTML = '<div class="no-data">Not enough historical data yet to show campaign trends.</div>';
+                return;
+            }
+
+            container.innerHTML = activeCampaigns.map(campaignName => `
+                <div class="sparkline-card">
+                    <div class="sparkline-label">${campaignName} - Leads</div>
+                    <div class="sparkline-canvas-wrap">
                         <canvas class="sparkline-canvas" data-campaign="${campaignName}"></canvas>
                     </div>
-                `;
-            }).join('');
+                </div>
+            `).join('');
 
             // Draw sparklines
-            leadGenCampaigns.forEach(campaignName => {
+            activeCampaigns.forEach(campaignName => {
                 const canvas = document.querySelector(`[data-campaign="${campaignName}"]`);
                 if (canvas) {
                     drawSparkline(canvas, campaignName);
@@ -1197,9 +1222,12 @@
 
         function drawSparkline(canvas, campaignName) {
             const ctx = canvas.getContext('2d');
+            // Use null for weeks where the campaign wasn't running so the line
+            // breaks instead of dropping to 0 and creating a spike artifact.
             const leadsData = DASHBOARD_DATA.weeks.map(w => {
                 const camp = w.campaigns.find(c => c.name === campaignName);
-                return camp ? camp.leads : 0;
+                if (!camp || (camp.spend || 0) === 0) return null;
+                return camp.leads || 0;
             });
 
             const chart = new Chart(ctx, {
@@ -1209,12 +1237,13 @@
                     datasets: [{
                         data: leadsData,
                         borderColor: '#00cec9',
-                        backgroundColor: 'rgba(0, 206, 201, 0.1)',
+                        backgroundColor: 'rgba(0, 206, 201, 0.15)',
                         borderWidth: 2,
                         fill: true,
-                        tension: 0.4,
-                        pointRadius: 0,
-                        pointHoverRadius: 0
+                        tension: 0.3,
+                        pointRadius: 2,
+                        pointHoverRadius: 4,
+                        spanGaps: true
                     }]
                 },
                 options: {
@@ -1223,7 +1252,7 @@
                     plugins: { legend: { display: false } },
                     scales: {
                         x: { display: false },
-                        y: { display: false }
+                        y: { display: false, beginAtZero: true }
                     }
                 }
             });
